@@ -1,0 +1,24 @@
+services:
+  panel:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    restart: always
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_PATH: /data/panel.db
+      LISTPRO_API_URL: ${LISTPRO_API_URL}
+      LISTPRO_ADMIN_TOKEN: ${LISTPRO_ADMIN_TOKEN}
+      PANEL_ADMIN_EMAIL: ${PANEL_ADMIN_EMAIL}
+      PANEL_ADMIN_PASSWORD: ${PANEL_ADMIN_PASSWORD}
+      PANEL_SESSION_SECRET: ${PANEL_SESSION_SECRET}
+      APP_ORIGIN: ${APP_ORIGIN:-}
+      TZ: Europe/Madrid
+    volumes:
+      - listpro_userweb_data:/data
+
+volumes:
+  listpro_userweb_data:
