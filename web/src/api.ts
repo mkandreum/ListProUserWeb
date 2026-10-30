@@ -1,4 +1,4 @@
-import type { Admin, Audit, Plan, Settings, Smtp, Stats, User } from './types';
+import type { Admin, Audit, PanelStatus, Plan, Settings, Smtp, Stats, User, UserDetail } from './types';
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, {
@@ -13,6 +13,8 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   let data: unknown = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = null; }
   if (!res.ok) {
+    // La sesión del panel caducó: la app vuelve al login (salvo en el propio login y en /me)
+    if (res.status === 401 && !path.startsWith('/api/auth/')) dispatchEvent(new Event('panel:logout'));
     const message = (data as { error?: string } | null)?.error ?? `Error ${res.status}`;
     throw Object.assign(new Error(message), { status: res.status });
   }
@@ -32,7 +34,12 @@ export const api = {
     if (params.page) qs.set('page', String(params.page));
     return req<{ users: User[]; total: number; page: number; pageSize: number }>(`/api/users${qs.toString() ? `?${qs}` : ''}`);
   },
-  user: (id: string) => req<User>(`/api/users/${encodeURIComponent(id)}`),
+  user: (id: string) => req<UserDetail>(`/api/users/${encodeURIComponent(id)}`),
+  logoutUser: (id: string) => req<UserDetail>(`/api/users/${encodeURIComponent(id)}/logout`, { method: 'POST' }),
+  deleteUser: (id: string, confirm: string) =>
+    req<void>(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ confirm }) }),
+  refreshCatalog: (store?: string) => req<{ status: string }>('/api/catalog/refresh', { method: 'POST', body: JSON.stringify({ store: store ?? '' }) }),
+  status: () => req<PanelStatus>('/api/status'),
   setPlan: (id: string, plan: Plan) =>
     req<User>(`/api/users/${encodeURIComponent(id)}/plan`, { method: 'POST', body: JSON.stringify({ plan }) }),
   regenerateInvite: (id: string) =>

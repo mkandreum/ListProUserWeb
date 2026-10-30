@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, ChevronLeft, ChevronRight, Copy, KeyRound, Mail, RefreshCw, Search, ShieldCheck, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronLeft, ChevronRight, Copy, KeyRound, LogOut, Mail, RefreshCw, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 import { api } from '../api';
-import type { Plan, Stats, User } from '../types';
-
-const fmtDate = (iso: string | null) => iso
-  ? new Date(iso).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
-  : '—';
-
-const fmtDateTime = (iso: string | null) => iso
-  ? new Date(iso).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' })
-  : '—';
+import type { Plan, Stats, User, UserDetail } from '../types';
+import { fmtDate, fmtDateTime, relative } from '../format';
 
 export function Users({ onToast }: { onToast: (s: string) => void }) {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -83,24 +76,24 @@ export function Users({ onToast }: { onToast: (s: string) => void }) {
               <th>Plan</th>
               <th>Invitación</th>
               <th>Alta</th>
-              <th>Último acceso</th>
+              <th>Actividad</th>
               <th aria-label="Acciones" />
             </tr>
           </thead>
           <tbody>
             {users.map((u) => (
               <tr key={u.id} onClick={() => setSelected(u)} tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') setSelected(u); }}>
-                <td>
+                <td data-label="Usuario">
                   <div className="who">
                     <span className="avatar">{u.name.slice(0, 1).toUpperCase()}</span>
                     <span><b>{u.name}</b><small>{u.email}</small></span>
                   </div>
                 </td>
-                <td><PlanBadge plan={u.plan} /></td>
-                <td><code className="invite">{u.inviteUsedAt ? 'usada' : u.inviteCode ?? '—'}</code></td>
-                <td className="muted">{fmtDate(u.createdAt)}</td>
-                <td className="muted">{fmtDateTime(u.lastLoginAt)}</td>
-                <td><ChevronRight size={18} className="chev" /></td>
+                <td data-label="Plan"><PlanBadge plan={u.plan} /></td>
+                <td data-label="Invitación"><code className="invite">{u.inviteUsedAt ? 'usada' : u.inviteCode ?? '—'}</code></td>
+                <td data-label="Alta" className="muted">{fmtDate(u.createdAt)}</td>
+                <td data-label="Actividad" className="muted" title={fmtDateTime(u.lastSeenAt ?? u.lastLoginAt)}><Activity iso={u.lastSeenAt ?? u.lastLoginAt} /></td>
+                <td className="chev-cell"><ChevronRight size={18} className="chev" /></td>
               </tr>
             ))}
             {!loading && !users.length && (
@@ -124,6 +117,7 @@ export function Users({ onToast }: { onToast: (s: string) => void }) {
           user={selected}
           onClose={() => setSelected(null)}
           onUpdated={(u) => { setSelected(u); setUsers((list) => list.map((x) => x.id === u.id ? u : x)); load(); }}
+          onDeleted={() => { setSelected(null); load(); }}
           onToast={onToast}
         />
       )}
@@ -144,46 +138,74 @@ export function PlanBadge({ plan }: { plan: Plan }) {
   return <span className={`badge ${plan}`}>{plan === 'pro' ? <><ShieldCheck size={13} /> Pro</> : 'Estándar'}</span>;
 }
 
-function UserSheet({ user, onClose, onUpdated, onToast }: {
+/** Punto verde si ha usado la app en la última semana. */
+function Activity({ iso }: { iso: string | null | undefined }) {
+  const recent = iso != null && Date.now() - Date.parse(iso) < 7 * 86_400_000;
+  return <span className="activity">{recent && <span className="live-dot" />}{relative(iso)}</span>;
+}
+
+function UserSheet({ user, onClose, onUpdated, onDeleted, onToast }: {
   user: User;
   onClose: () => void;
   onUpdated: (u: User) => void;
+  onDeleted: () => void;
   onToast: (s: string) => void;
 }) {
+  const [detail, setDetail] = useState<UserDetail | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [plan, setPlan] = useState<Plan>(user.plan);
   const [invite, setInvite] = useState(user.inviteCode);
   const [inviteUsed, setInviteUsed] = useState(user.inviteUsedAt);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [typed, setTyped] = useState('');
 
-  const changePlan = async (next: Plan) => {
-    if (next === plan || busy) return;
-    setBusy('plan');
-    try {
-      const u = await api.setPlan(user.id, next);
-      setPlan(u.plan);
-      onUpdated(u);
-      onToast(`${u.name} ahora es ${next === 'pro' ? 'Pro' : 'Estándar'}`);
-    } catch (e) { onToast((e as Error).message); } finally { setBusy(null); }
+  useEffect(() => {
+    let alive = true;
+    api.user(user.id).then((d) => alive && setDetail(d)).catch((e) => onToast((e as Error).message));
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { alive = false; removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
+  }, [user.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const run = async (key: string, fn: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(key);
+    try { await fn(); } catch (e) { onToast((e as Error).message); } finally { setBusy(null); }
   };
 
-  const regenerate = async () => {
-    setBusy('invite');
-    try {
-      const u = await api.regenerateInvite(user.id);
-      setInvite(u.inviteCode);
-      setInviteUsed(null);
-      onUpdated(u);
-      onToast('Invitación nueva generada');
-    } catch (e) { onToast((e as Error).message); } finally { setBusy(null); }
-  };
+  const changePlan = (next: Plan) => next !== plan && run('plan', async () => {
+    const u = await api.setPlan(user.id, next);
+    setPlan(u.plan);
+    onUpdated(u);
+    onToast(`${u.name} ahora es ${next === 'pro' ? 'Pro' : 'Estándar'}`);
+  });
 
-  const sendReset = async () => {
-    setBusy('reset');
-    try {
-      await api.sendReset(user.id);
-      onToast(`Correo de reset enviado a ${user.email}`);
-    } catch (e) { onToast((e as Error).message); } finally { setBusy(null); }
-  };
+  const regenerate = () => run('invite', async () => {
+    const u = await api.regenerateInvite(user.id);
+    setInvite(u.inviteCode);
+    setInviteUsed(null);
+    onUpdated(u);
+    onToast('Invitación nueva generada');
+  });
+
+  const sendReset = () => run('reset', async () => {
+    await api.sendReset(user.id);
+    onToast(`Correo para cambiar la contraseña enviado a ${user.email}`);
+  });
+
+  const logoutAll = () => run('logout', async () => {
+    const d = await api.logoutUser(user.id);
+    setDetail(d);
+    onToast(`Sesiones de ${user.name} cerradas: tendrá que volver a entrar`);
+  });
+
+  const remove = () => run('delete', async () => {
+    await api.deleteUser(user.id, typed);
+    onToast(`Cuenta de ${user.name} borrada`);
+    onDeleted();
+  });
 
   const copy = async () => {
     if (!invite) return;
@@ -191,6 +213,7 @@ function UserSheet({ user, onClose, onUpdated, onToast }: {
     catch { onToast(`Invitación: ${invite}`); }
   };
 
+  const d = detail;
   return (
     <div className="scrim" onClick={onClose} role="presentation">
       <section className="sheet" role="dialog" aria-modal="true" aria-label={`Usuario ${user.name}`} onClick={(e) => e.stopPropagation()}>
@@ -204,8 +227,26 @@ function UserSheet({ user, onClose, onUpdated, onToast }: {
 
         <div className="sheet-body">
           <div className="kv"><span>Alta</span><b>{fmtDate(user.createdAt)}</b></div>
-          <div className="kv"><span>Último acceso</span><b>{fmtDateTime(user.lastLoginAt)}</b></div>
-          <div className="kv"><span>Súper preferido</span><b>{user.store ?? '—'}</b></div>
+          <div className="kv"><span>Última actividad</span><b title={fmtDateTime(d?.lastSeenAt ?? user.lastSeenAt)}><Activity iso={d?.lastSeenAt ?? user.lastSeenAt ?? user.lastLoginAt} /></b></div>
+          <div className="kv"><span>Último inicio de sesión</span><b>{fmtDateTime(user.lastLoginAt)}</b></div>
+          <div className="kv"><span>Súper preferido</span><b>{STORE_NAMES[user.store ?? ''] ?? user.store ?? '—'}</b></div>
+          <div className="kv"><span>Le invitó</span><b>{d?.invitedByUser ? `${d.invitedByUser.name} · ${d.invitedByUser.email}` : d ? 'Nadie (alta directa)' : '…'}</b></div>
+
+          <h3>Lista de la compra</h3>
+          {!d ? <div className="skeleton" /> : !d.list ? <p className="muted small">Todavía no tiene lista en el servidor.</p> : (
+            <div className="list-card">
+              <div className="members">
+                {d.list.members.map((m) => <span key={m.id} className="chip"><span className="dot" style={{ background: m.hue }} />{m.name}{m.id === user.id ? ' (esta cuenta)' : ''}</span>)}
+              </div>
+              <div className="list-facts small muted num">
+                <span>{d.list.products} en la cesta</span>
+                <span>{d.list.savedBaskets} compras guardadas</span>
+                <span>{d.list.expenses} gastos</span>
+                <span>código {d.list.code}</span>
+                <span>cambiada {relative(d.list.updatedAt)}</span>
+              </div>
+            </div>
+          )}
 
           <h3>Plan</h3>
           <div className="segmented" role="group" aria-label="Plan del usuario">
@@ -215,20 +256,42 @@ function UserSheet({ user, onClose, onUpdated, onToast }: {
           <p className="muted small">Cambiar el plan no toca la configuración de altas nuevas.</p>
 
           <h3>Invitación</h3>
-          {inviteUsed ? (
-            <p className="muted small">La invitación de este usuario ya se usó. Genera una nueva si quieres que invite a alguien más.</p>
-          ) : (
-            <p className="muted small">Comparte este código para que alguien cree su cuenta.</p>
-          )}
+          <p className="muted small">{inviteUsed ? 'Su invitación ya se usó. Genera una nueva si quieres que invite a alguien más.' : 'Comparte este código para que alguien cree su cuenta.'}</p>
           <div className="invite-row">
             <code className="invite big">{invite ?? '—'}</code>
             <button className="btn small" disabled={!invite} onClick={copy}><Copy size={16} /> Copiar</button>
             <button className="btn small" disabled={!!busy} onClick={regenerate}><KeyRound size={16} /> {busy === 'invite' ? 'Generando…' : 'Nueva'}</button>
           </div>
+          {d && d.invitees.length > 0 && (
+            <div className="invitees">
+              <span className="muted small">Ha invitado a {d.invitees.length}:</span>
+              {d.invitees.map((x) => <span key={x.id} className="chip" title={x.email}>{x.name}</span>)}
+            </div>
+          )}
 
-          <h3>Contraseña</h3>
-          <p className="muted small">Le enviamos un enlace para que la cambie. Caduca en 1 hora.</p>
-          <button className="btn" disabled={!!busy} onClick={sendReset}><Mail size={17} /> {busy === 'reset' ? 'Enviando…' : 'Enviar correo de reset'}</button>
+          <h3>Acceso</h3>
+          <div className="btn-row">
+            <button className="btn" disabled={!!busy} onClick={sendReset}><Mail size={17} /> {busy === 'reset' ? 'Enviando…' : 'Enviar correo para cambiar la contraseña'}</button>
+            <button className="btn" disabled={!!busy} onClick={logoutAll}><LogOut size={17} /> {busy === 'logout' ? 'Cerrando…' : 'Cerrar todas sus sesiones'}</button>
+          </div>
+          <p className="muted small">El enlace del correo caduca en 1 hora. Cerrar sesiones le obliga a entrar de nuevo en todos sus dispositivos.</p>
+
+          <div className="danger-zone">
+            {!confirmDelete ? (
+              <button className="btn danger" onClick={() => setConfirmDelete(true)}><Trash2 size={17} /> Borrar la cuenta</button>
+            ) : (
+              <>
+                <p className="small"><AlertTriangle size={15} /> Se borra la cuenta para siempre. Su lista sigue existiendo para los demás miembros. Escribe <b>{user.email}</b> para confirmar.</p>
+                <input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={user.email} autoComplete="off" spellCheck={false} />
+                <div className="btn-row">
+                  <button className="btn" onClick={() => { setConfirmDelete(false); setTyped(''); }}>Cancelar</button>
+                  <button className="btn danger solid" disabled={!!busy || typed.trim().toLowerCase() !== user.email.toLowerCase()} onClick={remove}>
+                    <Trash2 size={17} /> {busy === 'delete' ? 'Borrando…' : 'Borrar para siempre'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
 
         <footer className="sheet-foot">
@@ -239,3 +302,5 @@ function UserSheet({ user, onClose, onUpdated, onToast }: {
     </div>
   );
 }
+
+const STORE_NAMES: Record<string, string> = { mercadona: 'Mercadona', consum: 'Consum', eci: 'El Corte Inglés' };

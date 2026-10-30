@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Check, KeyRound, Mail, RefreshCw, Save, Send, ShieldCheck } from 'lucide-react';
+import { KeyRound, Mail, RefreshCw, Save, Send, ShieldCheck } from 'lucide-react';
+import { AuditItem } from './Overview';
 import { api } from '../api';
 import type { Audit, Plan, Settings as SettingsType } from '../types';
 
@@ -109,7 +110,7 @@ export function Settings({ onToast }: { onToast: (s: string) => void }) {
             <input className="input" value={smtp.host} onChange={(e) => setSmtp({ ...smtp, host: e.target.value })} placeholder="smtp.gmail.com" />
           </label>
           <label className="field">Puerto
-            <input className="input" type="number" value={smtp.port} onChange={(e) => setSmtp({ ...smtp, port: Number(e.target.value) })} placeholder="587" />
+            <input className="input" type="number" value={smtp.port} onChange={(e) => setSmtp({ ...smtp, port: Number(e.target.value) || 0 })} onBlur={() => !smtp.port && setSmtp({ ...smtp, port: smtp.secure ? 465 : 587 })} placeholder="587" />
           </label>
           <label className="field">Usuario
             <input className="input" value={smtp.user} onChange={(e) => setSmtp({ ...smtp, user: e.target.value })} placeholder="usuario@dominio.com" autoComplete="off" />
@@ -122,7 +123,7 @@ export function Settings({ onToast }: { onToast: (s: string) => void }) {
             <input className="input" value={smtp.from} onChange={(e) => setSmtp({ ...smtp, from: e.target.value })} placeholder='"ListPro" <no-reply@listpro.xyoncloud.win>' />
           </label>
           <label className="check">
-            <input type="checkbox" checked={smtp.secure} onChange={(e) => setSmtp({ ...smtp, secure: e.target.checked })} /> TLS/SSL directo (puerto 465)
+            <input type="checkbox" checked={smtp.secure} onChange={(e) => setSmtp({ ...smtp, secure: e.target.checked, port: e.target.checked && smtp.port === 587 ? 465 : !e.target.checked && smtp.port === 465 ? 587 : smtp.port })} /> TLS/SSL directo (puerto 465)
           </label>
         </div>
 
@@ -141,13 +142,7 @@ export function Settings({ onToast }: { onToast: (s: string) => void }) {
         {!audit.length && <p className="muted small">Todavía no hay cambios registrados.</p>}
         {audit.length > 0 && (
           <ul className="audit">
-            {audit.map((a) => (
-              <li key={a.id}>
-                <Check size={14} />
-                <span><b>{a.action}</b>{a.target ? ` · ${a.target}` : ''}</span>
-                <time className="muted small">{new Date(a.at).toLocaleString('es-ES')}</time>
-              </li>
-            ))}
+            {audit.map((a) => <AuditItem key={a.id} a={a} />)}
           </ul>
         )}
       </section>

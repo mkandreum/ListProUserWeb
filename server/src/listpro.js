@@ -23,6 +23,17 @@ async function call(path, { method = 'GET', body } = {}) {
   let data;
   try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text.slice(0, 200) }; }
   if (!res.ok) {
+    // Un 401/403 de ListPro es un problema de configuración del panel (token), no de la sesión del administrador:
+    // si se devolviera tal cual, la web lo confundiría con "tu sesión ha caducado"
+    if (res.status === 401 || res.status === 403) {
+      throw Object.assign(new Error('ListPro ha rechazado el token del panel: LISTPRO_ADMIN_TOKEN tiene que ser igual que ADMIN_TOKEN en ListPro.'), { status: 502, code: 'BAD_TOKEN' });
+    }
+    if (res.status === 503 && /ADMIN_TOKEN/.test(data.error ?? '')) {
+      throw Object.assign(new Error('ListPro no tiene ADMIN_TOKEN configurado: añádelo en Coolify y redespliega.'), { status: 502, code: 'NO_TOKEN' });
+    }
+    if (res.status === 404 && /Cannot (GET|POST|PUT|PATCH|DELETE)/.test(text)) {
+      throw Object.assign(new Error('Esta versión de ListPro no tiene esa función: redespliega ListPro.'), { status: 502, code: 'OUTDATED' });
+    }
     throw Object.assign(new Error(data.error || `ListPro respondió ${res.status}`), { status: res.status, data });
   }
   return data;
@@ -36,6 +47,10 @@ export const listpro = {
   },
   user: (id) => call(`/api/admin/users/${encodeURIComponent(id)}`),
   setPlan: (id, plan) => call(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: { plan } }),
+  logoutUser: (id) => call(`/api/admin/users/${encodeURIComponent(id)}/logout`, { method: 'POST' }),
+  deleteUser: (id) => call(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  refreshCatalog: (store) => call(`/api/admin/refresh${store ? `?store=${encodeURIComponent(store)}` : ''}`, { method: 'POST' }),
+  health: () => call('/api/health'),
   regenerateInvite: (id) => call(`/api/admin/users/${encodeURIComponent(id)}/invite`, { method: 'POST' }),
   sendReset: (id) => call(`/api/admin/users/${encodeURIComponent(id)}/reset`, { method: 'POST' }),
   settings: () => call('/api/admin/settings'),

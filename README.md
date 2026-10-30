@@ -8,15 +8,24 @@ La contraseña SMTP se guarda cifrada en ListPro y **este panel nunca la recibe 
 ## Qué hace
 
 - Login de administrador con la cuenta definida en Coolify.
-- Listado y búsqueda de usuarios.
+- **Resumen**: usuarios, activos en 7 y 30 días, altas de los últimos 30 días, listas compartidas,
+  invitaciones, estado del correo y de los catálogos de cada súper (con botón para actualizarlos).
+- Listado y búsqueda de usuarios, con su última actividad (en el móvil se ve como tarjetas).
+- Ficha de usuario: quién le invitó, a quién ha invitado y su lista (miembros, productos, compras).
 - Cambiar plan **Pro / Estándar**.
 - Regenerar la invitación de un usuario.
 - Enviar el correo de restablecimiento de contraseña.
+- Cerrar todas las sesiones de un usuario y borrar su cuenta (hay que escribir su email para confirmar).
+- Aviso arriba si el panel no llega a ListPro o si el token no coincide.
 - Ajustes:
   - Plan por defecto de los usuarios nuevos: Pro o Estándar.
   - Registro con invitación obligatoria o abierto.
   - SMTP configurable y correo de prueba.
 - Auditoría de cambios.
+
+Necesita ListPro con la API de administración al día (la de esta versión añade la ficha completa,
+cerrar sesiones, borrar cuentas, `GET /api/admin/smtp` y más datos en las estadísticas). Con un ListPro
+antiguo el panel funciona, pero esas partes avisan de que hay que redesplegar ListPro.
 
 ## Variables de entorno
 

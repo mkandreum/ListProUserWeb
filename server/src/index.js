@@ -31,12 +31,31 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+/** Nombre y email del usuario afectado, para que la auditoría se entienda sin buscar ids. */
+async function who(id) {
+  try { const u = await listpro.user(id); return { name: u.name, email: u.email }; } catch { return {}; }
+}
+
 function audit(req, action, target = null, details = null) {
   db.prepare('INSERT INTO audit (admin_id, action, target, details, ip, at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(req.admin?.id ?? null, action, target, details ? JSON.stringify(details) : null, ip(req), new Date().toISOString());
 }
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+
+// Estado de la conexión con ListPro, para avisar en el panel en vez de fallar pantalla a pantalla
+app.get('/api/status', requireAdmin, async (_req, res) => {
+  const out = { listproUrl: process.env.LISTPRO_API_URL || null, reachable: false, tokenOk: false, error: null };
+  try {
+    await listpro.health();
+    out.reachable = true;
+    await listpro.stats();
+    out.tokenOk = true;
+  } catch (e) {
+    out.error = e.message;
+  }
+  res.json(out);
+});
 
 app.post('/api/auth/login', loginLimit, async (req, res) => {
   const email = normalizeEmail(req.body?.email);
@@ -71,7 +90,7 @@ app.post('/api/users/:id/plan', requireAdmin, async (req, res, next) => {
     const plan = req.body?.plan === 'pro' ? 'pro' : req.body?.plan === 'free' ? 'free' : null;
     if (!plan) return res.status(400).json({ error: 'Plan no válido.' });
     const user = await listpro.setPlan(req.params.id, plan);
-    audit(req, 'user.plan', req.params.id, { plan });
+    audit(req, 'user.plan', req.params.id, { plan, name: user.name, email: user.email });
     res.json(user);
   } catch (e) { next(e); }
 });
@@ -79,7 +98,7 @@ app.post('/api/users/:id/plan', requireAdmin, async (req, res, next) => {
 app.post('/api/users/:id/invite', requireAdmin, async (req, res, next) => {
   try {
     const user = await listpro.regenerateInvite(req.params.id);
-    audit(req, 'user.invite', req.params.id);
+    audit(req, 'user.invite', req.params.id, { name: user.name, email: user.email });
     res.json(user);
   } catch (e) { next(e); }
 });
@@ -87,7 +106,36 @@ app.post('/api/users/:id/invite', requireAdmin, async (req, res, next) => {
 app.post('/api/users/:id/reset', requireAdmin, async (req, res, next) => {
   try {
     const result = await listpro.sendReset(req.params.id);
-    audit(req, 'user.reset', req.params.id);
+    audit(req, 'user.reset', req.params.id, await who(req.params.id));
+    res.json(result);
+  } catch (e) { next(e); }
+});
+
+app.post('/api/users/:id/logout', requireAdmin, async (req, res, next) => {
+  try {
+    const user = await listpro.logoutUser(req.params.id);
+    audit(req, 'user.logout', req.params.id, { name: user.name, email: user.email });
+    res.json(user);
+  } catch (e) { next(e); }
+});
+
+// Borrar exige escribir el email del usuario: así no se borra a nadie por un clic despistado
+app.delete('/api/users/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const target = await listpro.user(req.params.id);
+    if (normalizeEmail(req.body?.confirm) !== normalizeEmail(target.email))
+      return res.status(400).json({ error: 'Escribe el email del usuario para confirmar.' });
+    await listpro.deleteUser(req.params.id);
+    audit(req, 'user.delete', req.params.id, { name: target.name, email: target.email });
+    res.status(204).end();
+  } catch (e) { next(e); }
+});
+
+app.post('/api/catalog/refresh', requireAdmin, async (req, res, next) => {
+  try {
+    const store = typeof req.body?.store === 'string' ? req.body.store : '';
+    const result = await listpro.refreshCatalog(store);
+    audit(req, 'catalog.refresh', store || 'todos');
     res.json(result);
   } catch (e) { next(e); }
 });
@@ -136,10 +184,19 @@ app.get('/api/stats', requireAdmin, async (_req, res, next) => {
 });
 
 app.get('/api/audit', requireAdmin, (_req, res) => {
-  res.json(db.prepare('SELECT id, action, target, details, at FROM audit ORDER BY id DESC LIMIT 100').all());
+  res.json(db.prepare(`SELECT a.id, a.action, a.target, a.details, a.at, ad.email AS admin
+    FROM audit a LEFT JOIN admins ad ON ad.id = a.admin_id ORDER BY a.id DESC LIMIT 200`).all());
 });
 
 app.use(compression());
+// Cabeceras de seguridad: el panel no se incrusta en otras webs ni se indexa
+app.use((_req, res, next) => {
+  res.set('X-Frame-Options', 'DENY');
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Referrer-Policy', 'same-origin');
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  next();
+});
 app.use(express.static(publicDir, {
   setHeaders(res, file) {
     if (file.endsWith('.html') || file.endsWith('sw.js')) res.set('Cache-Control', 'no-store');
