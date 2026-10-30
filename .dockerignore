@@ -1,0 +1,11 @@
+.git
+.gitignore
+node_modules
+**/node_modules
+.env
+.env.*
+!.env.example
+server/data
+server/public
+web/dist
+*.log
